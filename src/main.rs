@@ -1,10 +1,9 @@
 mod board;
 mod gui;
 
-use ggez::GameResult;
+use coffee::Result;
+use gui::start_game;
 
-fn main() -> GameResult {
-    gui::start_game()?;
-
-    Ok(())
+fn main() -> Result<()> {
+    start_game()
 }

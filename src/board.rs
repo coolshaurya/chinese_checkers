@@ -14,7 +14,7 @@ pub enum SideOfStar {
 pub type Player = SideOfStar;
 
 impl SideOfStar {
-    fn forward(self) -> Self {
+    pub fn forward(self) -> Self {
         use SideOfStar::*;
         match self {
             A => B,
@@ -26,7 +26,7 @@ impl SideOfStar {
         }
     }
 
-    fn opposite(self) -> Self {
+    pub fn opposite(self) -> Self {
         use SideOfStar::*;
         match self {
             A => D,
@@ -37,18 +37,16 @@ impl SideOfStar {
             F => C,
         }
     }
+
+    pub fn all() -> Vec<Self> {
+        use SideOfStar::*;
+        vec![A, B, C, D, E, F]
+    }
 }
 
 impl Default for SideOfStar {
     fn default() -> Self {
         Self::A
-    }
-}
-
-impl Iterator for SideOfStar {
-    type Item = Self;
-    fn next(&mut self) -> Option<Self::Item> {
-        Some(self.forward())
     }
 }
 
@@ -66,10 +64,14 @@ impl Spot {
         }
     }
 
-    pub fn is_player(self, player: Player) -> bool {
+    pub fn is_full(self) -> bool {
+        !self.is_empty()
+    }
+
+    pub fn is_player(self, other: Player) -> bool {
         match self {
-            Self::Player(current_player) => player == current_player,
-            Self::Empty => false,
+            Self::Player(player) => player == other,
+            _ => false,
         }
     }
 }
@@ -101,13 +103,6 @@ impl ops::Add for HexCoord {
     }
 }
 
-impl ops::Mul<i32> for HexCoord {
-    type Output = Self;
-    fn mul(self, other: i32) -> Self {
-        Self::new(self.horz * other, self.slant * other)
-    }
-}
-
 impl ops::Neg for HexCoord {
     type Output = Self;
     fn neg(self) -> Self {
@@ -119,6 +114,13 @@ impl ops::Sub for HexCoord {
     type Output = Self;
     fn sub(self, other: Self) -> Self {
         self + -other
+    }
+}
+
+impl ops::Mul<i32> for HexCoord {
+    type Output = Self;
+    fn mul(self, other: i32) -> Self {
+        Self::new(self.horz * other, self.slant * other)
     }
 }
 
@@ -166,12 +168,6 @@ impl HexCoord {
     }
 }
 
-#[derive(Debug, Clone)]
-enum Move {
-    Shift(HexCoord),
-    Jump(Vec<HexCoord>),
-}
-
 #[derive(Debug, Clone, Default)]
 struct GameOutcome(Vec<Player>);
 
@@ -195,7 +191,7 @@ impl Board {
         new_board
     }
 
-    fn setup_players(&mut self) {
+    pub fn setup_players(&mut self) {
         let player_tip = |side_of_star: SideOfStar| -> Vec<HexCoord> {
             use SideOfStar::*;
             match side_of_star {
@@ -208,10 +204,15 @@ impl Board {
             }
         };
 
-        for &player in self.players.clone().iter() {
+        for player in Player::all() {
+            let player_exists = self.players.contains(&player);
             let player_tip = player_tip(player);
             for player_tip_coord in player_tip {
-                self.put_player(player_tip_coord, player);
+                if player_exists {
+                    self.put_player(player_tip_coord, player);
+                } else {
+                    self.remove_player(player_tip_coord);
+                }
             }
         }
     }
@@ -223,15 +224,15 @@ impl Board {
         self.board.insert(coord, Spot::Player(player));
     }
 
-    pub fn get(&self, coord: &HexCoord) -> Option<&Spot> {
-        self.board.get(coord)
-    }
-
     pub fn remove_player(&mut self, coord: HexCoord) {
         if !self.is_valid(coord) {
             return;
         }
         self.board.insert(coord, Spot::Empty);
+    }
+
+    pub fn get(&self, coord: &HexCoord) -> Option<&Spot> {
+        self.board.get(coord)
     }
 
     fn is_valid(&self, coord: HexCoord) -> bool {
@@ -266,6 +267,7 @@ fn gen_board() -> HashMap<HexCoord, Spot> {
 }
 
 fn gen_players(players_count: usize) -> HashSet<Player> {
+    use maplit::hashset;
     use SideOfStar::*;
     let players_count = match players_count {
         2 | 3 | 4 | 6 => players_count,
@@ -273,10 +275,10 @@ fn gen_players(players_count: usize) -> HashSet<Player> {
     };
 
     match players_count {
-        2 => vec![A, D].into_iter().collect(),
-        3 => vec![A, C, E].into_iter().collect(),
-        4 => vec![A, B, D, E].into_iter().collect(),
-        6 => vec![A, B, C, D, E, F].into_iter().collect(),
+        2 => hashset![A, D],
+        3 => hashset![A, C, E],
+        4 => hashset![A, B, D, E],
+        6 => hashset![A, B, C, D, E, F],
         _ => unreachable!(),
     }
 }
