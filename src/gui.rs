@@ -1,30 +1,41 @@
 use coffee::graphics::{
-    Color, Frame, HorizontalAlignment, Mesh, Point, Shape, Transformation, Window, WindowSettings,
+    Color, CursorIcon, Frame, HorizontalAlignment, Mesh, Point, Shape, Transformation, Window,
+    WindowSettings,
 };
-use coffee::ui::{button, Align, Button, Checkbox, Column, Element, Renderer, Text, UserInterface};
+use coffee::ui::{
+    button, Align, Button, Checkbox, Column, Element, Justify, Renderer, Row, Text, UserInterface,
+};
 
-use coffee::input::{mouse, ButtonState, Event, Input};
 use coffee::load::Task;
 use coffee::{Game, Result, Timer};
 
 use crate::board::{Board, HexCoord, Player, SideOfStar, Spot};
 
+mod dragndrop;
+use dragndrop::DragNDrop;
+
 const SIN_30_DEG: f32 = 0.5;
 const COS_30_DEG: f32 = 0.866025403784439;
-const SIDE: f32 = 20.0;
+const SIDE: f32 = 22.0;
+
+impl SideOfStar {
+    fn color(self) -> Color {
+        match self {
+            Player::A => Color::from_rgb_u32(0xEE1133),
+            Player::B => Color::from_rgb_u32(0xFFE122),
+            Player::C => Color::from_rgb_u32(0xEE22CC),
+            Player::D => Color::from_rgb_u32(0x22EE55),
+            Player::E => Color::from_rgb_u32(0x2255FF),
+            Player::F => Color::from_rgb_u32(0xAA22FF),
+        }
+    }
+}
 
 impl Spot {
     fn color(self) -> Color {
         match self {
             Self::Empty => Color::from_rgb_u32(0xEEEEEE),
-            Self::Player(player) => match player {
-                Player::A => Color::from_rgb_u32(0xEE1133),
-                Player::B => Color::from_rgb_u32(0xFFE122),
-                Player::C => Color::from_rgb_u32(0xEE22CC),
-                Player::D => Color::from_rgb_u32(0x22EE55),
-                Player::E => Color::from_rgb_u32(0x2255FF),
-                Player::F => Color::from_rgb_u32(0xAA22FF),
-            },
+            Self::Player(player) => player.color(),
         }
     }
 }
@@ -44,8 +55,6 @@ impl HexCoord {
     // rounding code the redundant `rz` has been removed where
     // nescessary.
     fn from_point(point: Point, side: f32) -> Self {
-        let point = Point::from([point.x - 350.0, point.y - 350.0]);
-
         let horz = (3.0_f32.sqrt() / 3.0 * point.x - 1.0 / 3.0 * point.y) / side;
         let slant = (2.0 / 3.0 * point.y) / side;
 
@@ -72,20 +81,7 @@ impl HexCoord {
 }
 
 fn ideal_radius(hexagon_side: f32) -> f32 {
-    hexagon_side * COS_30_DEG * 0.97
-}
-
-#[derive(Debug, Clone)]
-struct LiftedPiece {
-    piece_coord: HexCoord,
-    current_position: Point,
-    dropped_position: Option<Point>,
-}
-
-impl LiftedPiece {
-    fn is_dropped(&self) -> bool {
-        self.dropped_position.is_some()
-    }
+    hexagon_side * COS_30_DEG * 0.85
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -104,90 +100,60 @@ impl Phase {
             GamePlay => unreachable!(),
         }
     }
-}
-
-#[derive(Debug, Clone, Default)]
-struct DragNDrop {
-    has_drag_started: bool,
-    drag_start_pos: Option<Point>,
-    current_drag_pos: Option<Point>,
-    is_dropped: bool,
-}
-
-impl Input for DragNDrop {
-    fn new() -> Self {
-        Self::default()
-    }
-
-    fn update(&mut self, event: Event) {
-        // we only care for mouse events  
-        if let Event::Mouse(event) = event {
-            if let mouse::Event::CursorMoved { x, y } = event {
-                match (
-                    self.has_drag_started,
-                    self.drag_start_pos.is_some(),
-                    self.current_drag_pos.is_some(),
-                ) {
-                    // drag not started, do nothing
-                    (false, _, _) => {}
-                    // drag started but postition not recorded
-                    (true, false, false) => {
-                        self.drag_start_pos = Some([x, y].into());
-                    }
-                    // drag started and position recorded
-                    (true, true, _) => {
-                        let point = [x, y].into();
-                        if nalgebra::distance(&self.drag_start_pos.unwrap(), &point) > 5.0 {
-                            self.current_drag_pos = Some(point);
-                        }
-                    }
-                    // all other combinations are invalid
-                    _ => unreachable!(),
-                }
-            } else if let mouse::Event::Input { button, state } = event {
-                if let mouse::Button::Left = button {
-                    match state {
-                        ButtonState::Pressed => {
-                            self.has_drag_started = true;
-                        }
-                        ButtonState::Released => {
-                            if self.has_drag_started && self.current_drag_pos.is_some() {
-                                self.is_dropped = true;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    fn clear(&mut self) {
-        if self.is_dropped {
-            *self = Self::default();
+    fn previous(self) -> Self {
+        use Phase::*;
+        match self {
+            Start => unreachable!(),
+            GameSetup => Start,
+            GamePlay => GameSetup,
         }
     }
 }
+#[derive(Debug, Clone)]
+pub struct LiftedPiece {
+    pub piece_coord: HexCoord,
+    pub current_pos: Point,
+    pub dropped_coord: Option<HexCoord>,
+}
 
-impl DragNDrop {
+impl LiftedPiece {
+    pub fn update_pos(&mut self, new_pos: Point) {
+        self.current_pos = new_pos;
+    }
+    pub fn new(coord: HexCoord, current_pos: Point) -> Self {
+        Self {
+            piece_coord: coord,
+            current_pos,
+            dropped_coord: None,
+        }
+    }
+    pub fn drop_piece<F>(&mut self, make_coord: F)
+    where
+        F: FnOnce(Point) -> HexCoord,
+    {
+        self.dropped_coord = Some(make_coord(self.current_pos));
+    }
 }
 
 #[derive(Clone, Debug)]
 struct BoardGame {
     inner_board: Board,
-    center: [f32; 2],
+    grid_center: [f32; 2],
     phase: Phase,
     lifted_piece: Option<LiftedPiece>,
-    start_button_state: button::State,
+    next_button_state: button::State,
+    previous_button_state: button::State,
 }
 
 impl BoardGame {
     fn new() -> Self {
         Self {
             inner_board: Board::new(3),
-            center: [450.0, 350.0],
+            grid_center: [450.0, 350.0],
             phase: Phase::Start,
             lifted_piece: None,
-            start_button_state: button::State::default(),
+            next_button_state: button::State::default(),
+            previous_button_state: button::State::default(),
         }
     }
 
@@ -198,7 +164,7 @@ impl BoardGame {
             .iter()
             .map(|(&coord, &spot)| (coord.hexagon_center(SIDE), spot.color()));
 
-        let mut mesh = Mesh::new();
+        let mut mesh = Mesh::new_with_tolerance(0.05);
 
         for (circle_center, color) in circle_centers {
             mesh.fill(
@@ -224,29 +190,119 @@ impl Game for BoardGame {
 
     fn draw(&mut self, frame: &mut Frame, _timer: &Timer) {
         frame.clear(Color::BLACK);
+
         if self.phase != Phase::GamePlay {
             return;
         }
+
         let mut target = frame.as_target();
-        let circles = self.circle_mesh();
 
         {
-            let transformation = Transformation::translate(self.center.into());
+            let transformation = Transformation::translate(self.grid_center.into());
             let mut grid_target = target.transform(transformation);
+
+            let circles = self.circle_mesh();
             circles.draw(&mut grid_target);
+
+            if let Some(lifted_piece) = &self.lifted_piece {
+                let circle = |center| Shape::Circle {
+                    center,
+                    radius: ideal_radius(SIDE),
+                };
+                let change_alpha = |color: Color| Color::new(color.r, color.g, color.b, 0.9);
+
+                let mut dragndrop_mesh = Mesh::new();
+                let spot = self
+                    .inner_board
+                    .get(&lifted_piece.piece_coord)
+                    .unwrap()
+                    .clone();
+
+                let lifted_indicator = circle(lifted_piece.piece_coord.hexagon_center(SIDE));
+                let lifted_indicator_color = match spot {
+                    Spot::Player(player) => {
+                        if player < Player::D {
+                            Color::BLUE
+                        } else {
+                            Color::RED
+                        }
+                    }
+                    _ => unreachable!()
+                };
+                dragndrop_mesh.fill(lifted_indicator.clone(), Spot::Empty.color());
+                dragndrop_mesh.stroke(lifted_indicator, lifted_indicator_color, 4.0);
+
+                let floating_circle = circle(lifted_piece.current_pos);
+                let floating_circle_color = change_alpha(spot.color());
+                dragndrop_mesh.fill(floating_circle, floating_circle_color);
+
+                dragndrop_mesh.draw(&mut grid_target);
+            }
         }
     }
 
     fn interact(&mut self, input: &mut Self::Input, window: &mut Window) {
-        let width_scale = 0.5;
-        let height_scale = 0.5;
-        self.center = [window.width() * width_scale, window.height() * height_scale];
+        let width_offset_percentage = 0.5;
+        let height_offset_percentage = 0.5;
+        self.grid_center = [
+            window.width() * width_offset_percentage,
+            window.height() * height_offset_percentage,
+        ];
+
+        let grid_center = self.grid_center;
+        let make_point_relative =
+            |point: Point| -> Point { point - Point::from(grid_center).coords };
+        let point_to_coord = |point: Point| HexCoord::from_point(point, SIDE);
+
+        if let Some((current_drag_pos, start_drag_pos)) = input.drag_status() {
+            let current_drag_pos = make_point_relative(current_drag_pos);
+            if let Some(lifted_piece) = self.lifted_piece.as_mut() {
+                lifted_piece.update_pos(current_drag_pos);
+                if input.is_dropped() {
+                    lifted_piece.drop_piece(point_to_coord);
+                }
+            } else {
+                let start_coord = point_to_coord(make_point_relative(start_drag_pos));
+                let spot = self.inner_board.get(&start_coord);
+                if let Some(spot) = spot {
+                    if spot.is_full() {
+                        self.lifted_piece = Some(LiftedPiece::new(start_coord, current_drag_pos));
+                    }
+                }
+            }
+        }
+    }
+
+    fn update(&mut self, _window: &Window) {
+        if self.phase != Phase::GamePlay {
+            return;
+        }
+        if let Some(lifted_piece) = &self.lifted_piece {
+            if let Some(dropped_coord) = lifted_piece.dropped_coord {
+                if self
+                    .inner_board
+                    .make_move(lifted_piece.piece_coord, dropped_coord)
+                {
+                    self.inner_board.start_next_turn();
+                };
+                self.lifted_piece = None;
+            }
+        }
+    }
+
+    fn cursor_icon(&self) -> CursorIcon {
+        if self.lifted_piece.is_some() {
+            CursorIcon::Move
+        } else {
+            CursorIcon::Default
+        }
     }
 }
 
 #[derive(Debug, Clone, Copy)]
 enum Message {
     Next,
+    Previous,
     PlayerToggle(SideOfStar, bool),
 }
 
@@ -261,27 +317,30 @@ impl UserInterface for BoardGame {
 
         let mut column = Column::new()
             .align_items(Align::Center)
-            .spacing(30)
-            .width(window.width() as u32)
-            .push(heading);
-        let next_button = Button::new(&mut self.start_button_state, "Next")
+            .spacing(20)
+            .width(window.width() as u32);
+        let next_button = Button::new(&mut self.next_button_state, "Next")
             .width(350)
             .on_press(Message::Next);
+        let previous_button = Button::new(&mut self.previous_button_state, "Previous")
+            .width(350)
+            .on_press(Message::Previous);
 
         column = match self.phase {
             Phase::Start => {
                 let description_text = "\
                 This is a game of Chinese Checkers. \
-                This game was originally called Stern-halma or sth like that in German. \
+                Chinese Checkers originated in Germany where it was called Sternhalma. \
+                Chinese Checkers is played on a star-shaped board. \
                 ";
                 let description = Text::new(description_text).width(500);
 
-                column.push(description).push(next_button)
+                column.push(heading).push(description).push(next_button)
             }
             Phase::GameSetup => {
                 let mut checkboxes = Column::new().spacing(5).width(400);
                 for side_of_star in SideOfStar::all() {
-                    let label = &format!("Player  {:?}", side_of_star);
+                    let label = &format!("Side{:?}", side_of_star);
                     let checkbox = Checkbox::new(
                         self.inner_board.players.contains(&side_of_star),
                         label,
@@ -293,11 +352,26 @@ impl UserInterface for BoardGame {
                 let sub_heading = Text::new("Please select the players you want")
                     .horizontal_alignment(HorizontalAlignment::Center)
                     .size(30);
-                column.push(sub_heading).push(checkboxes).push(next_button)
+                column
+                    .push(heading)
+                    .push(sub_heading)
+                    .push(checkboxes)
+                    .push(next_button)
+                    .push(previous_button)
             }
             Phase::GamePlay => {
-                let turn = Text::new(&format!("Turn: {:?}", self.inner_board.turn)).size(25);
-                column.push(turn)
+                let mut spacer_column = Column::new()
+                    .justify_content(Justify::SpaceBetween)
+                    .align_items(Align::Center)
+                    .spacing((window.height() * 0.8) as u16);
+                let turn = Row::new().justify_content(Justify::SpaceAround).push(
+                    Text::new(&format!("Turn:{:?}", self.inner_board.turn))
+                        .size(25)
+                        .horizontal_alignment(HorizontalAlignment::Center),
+                );
+                spacer_column = spacer_column.push(turn).push(previous_button);
+                let heading = heading.size(40);
+                column.spacing(10).push(heading).push(spacer_column)
             }
         };
 
@@ -311,6 +385,9 @@ impl UserInterface for BoardGame {
                     self.inner_board.setup_players();
                 };
                 self.phase = self.phase.next();
+            }
+            Message::Previous => {
+                self.phase = self.phase.previous();
             }
             Message::PlayerToggle(side, checked) => {
                 if checked {

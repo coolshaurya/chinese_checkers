@@ -13,4 +13,4 @@ nalgebra = "0.18.1"
 
 [dependencies.coffee]
 version = "0.4"
-features = ["vulkan"]
+features = ["opengl"]

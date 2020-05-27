@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::ops;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum SideOfStar {
     A,
     B,
@@ -50,7 +50,7 @@ impl Default for SideOfStar {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Spot {
     Empty,
     Player(Player),
@@ -67,8 +67,16 @@ impl Spot {
     pub fn is_full(self) -> bool {
         !self.is_empty()
     }
+}
 
-    pub fn is_player(self, other: Player) -> bool {
+impl Default for Spot {
+    fn default() -> Self {
+        Self::Empty
+    }
+}
+
+impl PartialEq<Player> for Spot {
+    fn eq(&self, other: &Player) -> bool {
         match self {
             Self::Player(player) => player == other,
             _ => false,
@@ -76,9 +84,9 @@ impl Spot {
     }
 }
 
-impl Default for Spot {
-    fn default() -> Self {
-        Self::Empty
+impl PartialEq<Spot> for Player {
+    fn eq(&self, spot: &Spot) -> bool {
+        spot == self
     }
 }
 
@@ -129,18 +137,30 @@ impl HexCoord {
         HexCoord { horz, slant }
     }
 
+    const NEIGHBOR_OFFSETS: [HexCoord; 6] = [
+        Self::new(1, 0),
+        Self::new(1, -1),
+        Self::new(0, -1),
+        Self::new(-1, 0),
+        Self::new(-1, 1),
+        Self::new(0, 1),
+    ];
+
     fn neighbors(self) -> Vec<Self> {
-        vec![
-            Self::new(0, -1),
-            Self::new(0, 1),
-            Self::new(1, 0),
-            Self::new(-1, 0),
-            Self::new(-1, 1),
-            Self::new(1, -1),
-        ]
-        .into_iter()
-        .map(|neighbor_offset| self + neighbor_offset)
-        .collect()
+        Self::NEIGHBOR_OFFSETS
+            .iter()
+            .copied()
+            .map(|neighbor_offset| self + neighbor_offset)
+            .collect()
+    }
+
+    fn jump_neighbors(self) -> Vec<Self> {
+        Self::NEIGHBOR_OFFSETS
+            .iter()
+            .copied()
+            .map(|coord| coord * 2)
+            .map(|neighbor_offset| self + neighbor_offset)
+            .collect()
     }
 
     fn triangle_tip_up(self, size: i32) -> Vec<Self> {
@@ -215,6 +235,8 @@ impl Board {
                 }
             }
         }
+
+        self.turn = self.players.iter().min().unwrap().clone();
     }
 
     pub fn put_player(&mut self, coord: HexCoord, player: Player) {
@@ -239,7 +261,7 @@ impl Board {
         self.board.contains_key(&coord)
     }
 
-    pub fn swap(&mut self, coord1: HexCoord, coord2: HexCoord) {
+    fn swap(&mut self, coord1: HexCoord, coord2: HexCoord) {
         if !self.is_valid(coord1) || !self.is_valid(coord2) {
             return;
         }
@@ -248,6 +270,65 @@ impl Board {
 
         self.board.insert(coord1, spot2);
         self.board.insert(coord2, spot1);
+    }
+
+    pub fn make_move(&mut self, start_coord: HexCoord, end_coord: HexCoord) -> bool {
+        let is_move_valid = self.validate_move(start_coord, end_coord);
+        if is_move_valid {
+            self.swap(start_coord, end_coord);
+        }
+        is_move_valid
+    }
+
+    fn validate_move(&self, start_coord: HexCoord, end_coord: HexCoord) -> bool {
+        let start_spot = self.get(&start_coord);
+        let end_spot = self.get(&end_coord);
+        if (start_spot.is_none() || end_spot.is_none())
+            || (start_spot.unwrap().is_empty() || end_spot.unwrap().is_full())
+        // the unwraps never get called on a None due to short-circuit evaluation
+        {
+            return false;
+        }
+
+        if start_coord.neighbors().contains(&end_coord) {
+            // is a shift of one place
+            true
+        } else {
+            let mut jump_centers = vec![start_coord];
+            let mut traversed_jump_centers = Vec::new();
+            while !jump_centers.is_empty() {
+                let mut new_jump_centers = Vec::new();
+                for &jump_center in &jump_centers {
+                    for (neighbor, jump_neighbor) in jump_center
+                        .neighbors()
+                        .into_iter()
+                        .zip(jump_center.jump_neighbors())
+                    {
+                        if !traversed_jump_centers.contains(&jump_neighbor) {
+                            if let (Some(Spot::Player(_)), Some(Spot::Empty)) =
+                                (self.get(&neighbor), self.get(&jump_neighbor))
+                            {
+                                if jump_neighbor == end_coord {
+                                    return true;
+                                }
+                                new_jump_centers.push(jump_neighbor);
+                            }
+                        }
+                    }
+                }
+                traversed_jump_centers.append(&mut jump_centers);
+                jump_centers = new_jump_centers;
+            }
+            false
+        }
+    }
+
+    pub fn start_next_turn(&mut self) {
+        let mut next_turn = self.turn.forward();
+        while !self.players.contains(&next_turn) {
+            next_turn = next_turn.forward();
+        }
+        self.turn = next_turn;
     }
 }
 
