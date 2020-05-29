@@ -239,6 +239,12 @@ impl Board {
         self.turn = self.players.iter().min().unwrap().clone();
     }
 
+    pub fn reset_board(&mut self) {
+        for (_key, value) in self.board.iter_mut() {
+            *value = Spot::default()
+        }
+    }
+
     pub fn put_player(&mut self, coord: HexCoord, player: Player) {
         if !self.is_valid(coord) {
             return;
@@ -272,12 +278,11 @@ impl Board {
         self.board.insert(coord2, spot1);
     }
 
-    pub fn make_move(&mut self, start_coord: HexCoord, end_coord: HexCoord) -> bool {
-        let is_move_valid = self.validate_move(start_coord, end_coord);
-        if is_move_valid {
+    pub fn make_move(&mut self, start_coord: HexCoord, end_coord: HexCoord) {
+        if self.validate_move(start_coord, end_coord) {
             self.swap(start_coord, end_coord);
+            self.start_next_turn();
         }
-        is_move_valid
     }
 
     fn validate_move(&self, start_coord: HexCoord, end_coord: HexCoord) -> bool {
@@ -285,6 +290,7 @@ impl Board {
         let end_spot = self.get(&end_coord);
         if (start_spot.is_none() || end_spot.is_none())
             || (start_spot.unwrap().is_empty() || end_spot.unwrap().is_full())
+            || start_spot.unwrap() != &self.turn
         // the unwraps never get called on a None due to short-circuit evaluation
         {
             return false;

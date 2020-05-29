@@ -1,6 +1,6 @@
 use coffee::graphics::{
-    Color, CursorIcon, Frame, HorizontalAlignment, Mesh, Point, Shape, Transformation, Window,
-    WindowSettings,
+    Color, CursorIcon, Frame, HorizontalAlignment, Mesh, Point, Shape, Transformation,
+    VerticalAlignment, Window, WindowSettings,
 };
 use coffee::ui::{
     button, Align, Button, Checkbox, Column, Element, Justify, Renderer, Row, Text, UserInterface,
@@ -227,7 +227,7 @@ impl Game for BoardGame {
                             Color::RED
                         }
                     }
-                    _ => unreachable!()
+                    _ => unreachable!(),
                 };
                 dragndrop_mesh.fill(lifted_indicator.clone(), Spot::Empty.color());
                 dragndrop_mesh.stroke(lifted_indicator, lifted_indicator_color, 4.0);
@@ -249,6 +249,10 @@ impl Game for BoardGame {
             window.height() * height_offset_percentage,
         ];
 
+        if self.phase != Phase::GamePlay {
+            return;
+        }
+
         let grid_center = self.grid_center;
         let make_point_relative =
             |point: Point| -> Point { point - Point::from(grid_center).coords };
@@ -265,7 +269,7 @@ impl Game for BoardGame {
                 let start_coord = point_to_coord(make_point_relative(start_drag_pos));
                 let spot = self.inner_board.get(&start_coord);
                 if let Some(spot) = spot {
-                    if spot.is_full() {
+                    if spot == &self.inner_board.turn {
                         self.lifted_piece = Some(LiftedPiece::new(start_coord, current_drag_pos));
                     }
                 }
@@ -279,12 +283,8 @@ impl Game for BoardGame {
         }
         if let Some(lifted_piece) = &self.lifted_piece {
             if let Some(dropped_coord) = lifted_piece.dropped_coord {
-                if self
-                    .inner_board
-                    .make_move(lifted_piece.piece_coord, dropped_coord)
-                {
-                    self.inner_board.start_next_turn();
-                };
+                self.inner_board
+                    .make_move(lifted_piece.piece_coord, dropped_coord);
                 self.lifted_piece = None;
             }
         }
@@ -340,7 +340,7 @@ impl UserInterface for BoardGame {
             Phase::GameSetup => {
                 let mut checkboxes = Column::new().spacing(5).width(400);
                 for side_of_star in SideOfStar::all() {
-                    let label = &format!("Side{:?}", side_of_star);
+                    let label = &format!("Side_{:?}", side_of_star);
                     let checkbox = Checkbox::new(
                         self.inner_board.players.contains(&side_of_star),
                         label,
@@ -364,14 +364,20 @@ impl UserInterface for BoardGame {
                     .justify_content(Justify::SpaceBetween)
                     .align_items(Align::Center)
                     .spacing((window.height() * 0.8) as u16);
-                let turn = Row::new().justify_content(Justify::SpaceAround).push(
-                    Text::new(&format!("Turn:{:?}", self.inner_board.turn))
-                        .size(25)
-                        .horizontal_alignment(HorizontalAlignment::Center),
-                );
+                let turn_text = |text: &str| Text::new(text).size(25);
+                let turn = Row::new()
+                    .justify_content(Justify::Center)
+                    .align_items(Align::Center)
+                    .push(Text::new("Turn: ").size(25))
+                    .push(
+                        turn_text(&format!("{:?}", self.inner_board.turn))
+                            .color(self.inner_board.turn.color())
+                            .size(40),
+                    );
+
                 spacer_column = spacer_column.push(turn).push(previous_button);
                 let heading = heading.size(40);
-                column.spacing(10).push(heading).push(spacer_column)
+                column.spacing(5).push(heading).push(spacer_column)
             }
         };
 
@@ -382,6 +388,7 @@ impl UserInterface for BoardGame {
         match message {
             Message::Next => {
                 if self.phase == Phase::GameSetup {
+                    self.inner_board.reset_board();
                     self.inner_board.setup_players();
                 };
                 self.phase = self.phase.next();
