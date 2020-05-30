@@ -3,9 +3,9 @@ use coffee::input::{mouse, ButtonState, Event, Input};
 
 #[derive(Debug, Clone, Default)]
 pub struct DragNDrop {
-    has_drag_started: bool,
-    start_drag_pos: Option<Point>,
-    current_drag_pos: Option<Point>,
+    drag_started: bool,
+    start_pos: Option<Point>,
+    current_pos: Option<Point>,
     is_dropped: bool,
 }
 
@@ -20,20 +20,21 @@ impl Input for DragNDrop {
             if let mouse::Event::CursorMoved { x, y } = event {
                 let point = [x, y].into();
                 match (
-                    self.has_drag_started,
-                    self.start_drag_pos.is_some(),
-                    self.current_drag_pos.is_some(),
+                    self.drag_started,
+                    self.start_pos.is_some(),
+                    self.current_pos.is_some(),
                 ) {
                     // drag not started, do nothing
-                    (false, _, _) => {}
+                    (false, false, false) => {}
                     // drag started but start postition not recorded
                     (true, false, false) => {
-                        self.start_drag_pos = Some(point);
+                        self.start_pos = Some(point);
                     }
                     // drag started and start position recorded
+                    // but current position not recorded
                     (true, true, _) => {
-                        if nalgebra::distance(&self.start_drag_pos.unwrap(), &point) > 5.0 {
-                            self.current_drag_pos = Some(point);
+                        if nalgebra::distance(&self.start_pos.unwrap(), &point) > 3.0 {
+                            self.current_pos = Some(point);
                         }
                     }
                     // all other combinations are invalid
@@ -44,10 +45,10 @@ impl Input for DragNDrop {
                 if let mouse::Button::Left = button {
                     match state {
                         ButtonState::Pressed => {
-                            self.has_drag_started = true;
+                            self.drag_started = true;
                         }
                         ButtonState::Released => {
-                            if self.current_drag_pos.is_none() {
+                            if self.current_pos.is_none() {
                                 self.reset()
                             } else {
                                 self.is_dropped = true;
@@ -75,6 +76,6 @@ impl DragNDrop {
         self.is_dropped
     }
     pub fn drag_status(&self) -> Option<(Point, Point)> {
-        Some((self.current_drag_pos?, self.start_drag_pos?))
+        Some((self.current_pos?, self.start_pos?))
     }
 }

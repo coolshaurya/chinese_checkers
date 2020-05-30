@@ -1,13 +1,11 @@
 use coffee::graphics::{
-    Color, CursorIcon, Frame, HorizontalAlignment, Mesh, Point, Shape, Transformation,
-    VerticalAlignment, Window, WindowSettings,
+    Color, CursorIcon, Frame, HorizontalAlignment, Mesh, Point, Shape, Transformation, Window,
+    WindowSettings,
 };
 use coffee::ui::{
     button, Align, Button, Checkbox, Column, Element, Justify, Renderer, Row, Text, UserInterface,
 };
-
-use coffee::load::Task;
-use coffee::{Game, Result, Timer};
+use coffee::{load::Task, Game, Result, Timer};
 
 use crate::board::{Board, HexCoord, Player, SideOfStar, Spot};
 
@@ -87,51 +85,53 @@ fn ideal_radius(hexagon_side: f32) -> f32 {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Phase {
     Start,
-    GameSetup,
-    GamePlay,
+    Setup,
+    Play,
 }
 
 impl Phase {
     fn next(self) -> Self {
         use Phase::*;
         match self {
-            Start => GameSetup,
-            GameSetup => GamePlay,
-            GamePlay => unreachable!(),
+            Start => Setup,
+            Setup => Play,
+            Play => unreachable!(),
         }
     }
     fn previous(self) -> Self {
         use Phase::*;
         match self {
             Start => unreachable!(),
-            GameSetup => Start,
-            GamePlay => GameSetup,
+            Setup => Start,
+            Play => Setup,
         }
     }
 }
+
 #[derive(Debug, Clone)]
 pub struct LiftedPiece {
     pub piece_coord: HexCoord,
     pub current_pos: Point,
-    pub dropped_coord: Option<HexCoord>,
+    pub drop_coord: Option<HexCoord>,
 }
 
 impl LiftedPiece {
-    pub fn update_pos(&mut self, new_pos: Point) {
-        self.current_pos = new_pos;
-    }
     pub fn new(coord: HexCoord, current_pos: Point) -> Self {
         Self {
             piece_coord: coord,
             current_pos,
-            dropped_coord: None,
+            drop_coord: None,
         }
+    }
+
+    pub fn update_pos(&mut self, new_pos: Point) {
+        self.current_pos = new_pos;
     }
     pub fn drop_piece<F>(&mut self, make_coord: F)
     where
         F: FnOnce(Point) -> HexCoord,
     {
-        self.dropped_coord = Some(make_coord(self.current_pos));
+        self.drop_coord = Some(make_coord(self.current_pos));
     }
 }
 
@@ -148,7 +148,7 @@ struct BoardGame {
 impl BoardGame {
     fn new() -> Self {
         Self {
-            inner_board: Board::new(3),
+            inner_board: Board::new(2),
             grid_center: [450.0, 350.0],
             phase: Phase::Start,
             lifted_piece: None,
@@ -191,53 +191,51 @@ impl Game for BoardGame {
     fn draw(&mut self, frame: &mut Frame, _timer: &Timer) {
         frame.clear(Color::BLACK);
 
-        if self.phase != Phase::GamePlay {
+        if self.phase != Phase::Play {
             return;
         }
 
         let mut target = frame.as_target();
 
-        {
-            let transformation = Transformation::translate(self.grid_center.into());
-            let mut grid_target = target.transform(transformation);
+        let transformation = Transformation::translate(self.grid_center.into());
+        let mut grid_target = target.transform(transformation);
 
-            let circles = self.circle_mesh();
-            circles.draw(&mut grid_target);
+        let circles = self.circle_mesh();
+        circles.draw(&mut grid_target);
 
-            if let Some(lifted_piece) = &self.lifted_piece {
-                let circle = |center| Shape::Circle {
-                    center,
-                    radius: ideal_radius(SIDE),
-                };
-                let change_alpha = |color: Color| Color::new(color.r, color.g, color.b, 0.9);
+        if let Some(lifted_piece) = &self.lifted_piece {
+            let circle = |center| Shape::Circle {
+                center,
+                radius: ideal_radius(SIDE),
+            };
+            const DRAG_ALPHA: f32 = 0.9;
+            let change_alpha = |color: Color| Color::new(color.r, color.g, color.b, DRAG_ALPHA);
 
-                let mut dragndrop_mesh = Mesh::new();
-                let spot = self
-                    .inner_board
-                    .get(&lifted_piece.piece_coord)
-                    .unwrap()
-                    .clone();
+            let mut dragndrop_mesh = Mesh::new();
+            let spot = self
+                .inner_board
+                .get(&lifted_piece.piece_coord)
+                .unwrap()
+                .clone();
 
-                let lifted_indicator = circle(lifted_piece.piece_coord.hexagon_center(SIDE));
-                let lifted_indicator_color = match spot {
-                    Spot::Player(player) => {
-                        if player < Player::D {
-                            Color::BLUE
-                        } else {
-                            Color::RED
-                        }
+            let lifted_indicator = circle(lifted_piece.piece_coord.hexagon_center(SIDE));
+            let lifted_indicator_color = match spot {
+                Spot::Player(player) => {
+                    match player {
+                        Player::A | Player::B | Player::C => Color::BLUE,
+                        Player::D | Player::E | Player::F => Color::RED,
                     }
-                    _ => unreachable!(),
-                };
-                dragndrop_mesh.fill(lifted_indicator.clone(), Spot::Empty.color());
-                dragndrop_mesh.stroke(lifted_indicator, lifted_indicator_color, 4.0);
+                }
+                _ => unreachable!(),
+            };
+            dragndrop_mesh.fill(lifted_indicator.clone(), Spot::Empty.color());
+            dragndrop_mesh.stroke(lifted_indicator, lifted_indicator_color, 4.0);
 
-                let floating_circle = circle(lifted_piece.current_pos);
-                let floating_circle_color = change_alpha(spot.color());
-                dragndrop_mesh.fill(floating_circle, floating_circle_color);
+            let floating_circle = circle(lifted_piece.current_pos);
+            let floating_circle_color = change_alpha(spot.color());
+            dragndrop_mesh.fill(floating_circle, floating_circle_color);
 
-                dragndrop_mesh.draw(&mut grid_target);
-            }
+            dragndrop_mesh.draw(&mut grid_target);
         }
     }
 
@@ -249,7 +247,7 @@ impl Game for BoardGame {
             window.height() * height_offset_percentage,
         ];
 
-        if self.phase != Phase::GamePlay {
+        if self.phase != Phase::Play {
             return;
         }
 
@@ -278,13 +276,14 @@ impl Game for BoardGame {
     }
 
     fn update(&mut self, _window: &Window) {
-        if self.phase != Phase::GamePlay {
+        if self.phase != Phase::Play {
             return;
         }
+
         if let Some(lifted_piece) = &self.lifted_piece {
-            if let Some(dropped_coord) = lifted_piece.dropped_coord {
+            if let Some(drop_coord) = lifted_piece.drop_coord {
                 self.inner_board
-                    .make_move(lifted_piece.piece_coord, dropped_coord);
+                    .make_move(lifted_piece.piece_coord, drop_coord);
                 self.lifted_piece = None;
             }
         }
@@ -337,7 +336,7 @@ impl UserInterface for BoardGame {
 
                 column.push(heading).push(description).push(next_button)
             }
-            Phase::GameSetup => {
+            Phase::Setup => {
                 let mut checkboxes = Column::new().spacing(5).width(400);
                 for side_of_star in SideOfStar::all() {
                     let label = &format!("Side_{:?}", side_of_star);
@@ -359,18 +358,17 @@ impl UserInterface for BoardGame {
                     .push(next_button)
                     .push(previous_button)
             }
-            Phase::GamePlay => {
+            Phase::Play => {
                 let mut spacer_column = Column::new()
                     .justify_content(Justify::SpaceBetween)
                     .align_items(Align::Center)
                     .spacing((window.height() * 0.8) as u16);
-                let turn_text = |text: &str| Text::new(text).size(25);
                 let turn = Row::new()
                     .justify_content(Justify::Center)
                     .align_items(Align::Center)
                     .push(Text::new("Turn: ").size(25))
                     .push(
-                        turn_text(&format!("{:?}", self.inner_board.turn))
+                        Text::new(&format!("{:?}", self.inner_board.turn))
                             .color(self.inner_board.turn.color())
                             .size(40),
                     );
@@ -387,7 +385,7 @@ impl UserInterface for BoardGame {
     fn react(&mut self, message: Self::Message, _window: &mut Window) {
         match message {
             Message::Next => {
-                if self.phase == Phase::GameSetup {
+                if self.phase == Phase::Setup {
                     self.inner_board.reset_board();
                     self.inner_board.setup_players();
                 };
