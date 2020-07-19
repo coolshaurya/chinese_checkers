@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap};
 use std::ops;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -194,7 +194,7 @@ struct GameOutcome(Vec<Player>);
 #[derive(Debug, Clone)]
 pub struct Board {
     pub board: HashMap<HexCoord, Spot>,
-    pub players: HashSet<Player>,
+    pub players: BTreeSet<Player>,
     pub turn: Player,
 }
 
@@ -202,7 +202,7 @@ impl Board {
     pub fn new(players_count: usize) -> Self {
         let mut new_board = Self {
             players: gen_players(players_count),
-            board: gen_board(),
+            board: gen_empty_board(),
             turn: Player::default(),
         };
 
@@ -224,25 +224,20 @@ impl Board {
             }
         };
 
+        for (_coord, spot) in self.board.iter_mut() {
+            *spot = Spot::default()
+        }
+
         for player in Player::all() {
-            let player_exists = self.players.contains(&player);
             let player_tip = player_tip(player);
             for player_tip_coord in player_tip {
-                if player_exists {
+                if self.players.contains(&player) {
                     self.put_player(player_tip_coord, player);
-                } else {
-                    self.remove_player(player_tip_coord);
                 }
             }
         }
 
-        self.turn = self.players.iter().min().unwrap().clone();
-    }
-
-    pub fn reset_board(&mut self) {
-        for (_key, value) in self.board.iter_mut() {
-            *value = Spot::default()
-        }
+        self.turn = self.players.iter().next().copied().unwrap();
     }
 
     pub fn put_player(&mut self, coord: HexCoord, player: Player) {
@@ -288,16 +283,14 @@ impl Board {
     fn validate_move(&self, start_coord: HexCoord, end_coord: HexCoord) -> bool {
         let start_spot = self.get(&start_coord);
         let end_spot = self.get(&end_coord);
-        if (start_spot.is_none() || end_spot.is_none())
-            || (start_spot.unwrap().is_empty() || end_spot.unwrap().is_full())
-            || start_spot.unwrap() != &self.turn
-        // the unwraps never get called on a None due to short-circuit evaluation
+        
+        if !matches!(start_spot, Some(spot) if spot == &self.turn)
+            || !matches!(end_spot, Some(Spot::Empty))
         {
             return false;
         }
 
         if start_coord.neighbors().contains(&end_coord) {
-            // is a shift of one place
             true
         } else {
             let mut jump_centers = vec![start_coord];
@@ -330,15 +323,19 @@ impl Board {
     }
 
     pub fn start_next_turn(&mut self) {
-        let mut next_turn = self.turn.forward();
-        while !self.players.contains(&next_turn) {
-            next_turn = next_turn.forward();
-        }
-        self.turn = next_turn;
+        self.turn = self
+            .players
+            .iter()
+            .cycle()
+            .skip_while(|&&player| player != self.turn)
+            .skip(1)
+            .next()
+            .copied()
+            .unwrap();
     }
 }
 
-fn gen_board() -> HashMap<HexCoord, Spot> {
+fn gen_empty_board() -> HashMap<HexCoord, Spot> {
     let big_triangle = HexCoord::new(4, -8).triangle_tip_up(13).into_iter();
 
     let triangle_1 = HexCoord::new(-4, -1).triangle_tip_down(4).into_iter();
@@ -353,8 +350,8 @@ fn gen_board() -> HashMap<HexCoord, Spot> {
         .collect()
 }
 
-fn gen_players(players_count: usize) -> HashSet<Player> {
-    use maplit::hashset;
+fn gen_players(players_count: usize) -> BTreeSet<Player> {
+    use maplit::btreeset;
     use SideOfStar::*;
     let players_count = match players_count {
         2 | 3 | 4 | 6 => players_count,
@@ -362,10 +359,10 @@ fn gen_players(players_count: usize) -> HashSet<Player> {
     };
 
     match players_count {
-        2 => hashset![A, D],
-        3 => hashset![A, C, E],
-        4 => hashset![A, B, D, E],
-        6 => hashset![A, B, C, D, E, F],
+        2 => btreeset![A, D],
+        3 => btreeset![A, C, E],
+        4 => btreeset![A, B, D, E],
+        6 => btreeset![A, B, C, D, E, F],
         _ => unreachable!(),
     }
 }

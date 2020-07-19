@@ -386,7 +386,6 @@ impl UserInterface for BoardGame {
         match message {
             Message::Next => {
                 if self.phase == Phase::Setup {
-                    self.inner_board.reset_board();
                     self.inner_board.setup_players();
                 };
                 self.phase = self.phase.next();
