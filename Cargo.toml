@@ -9,7 +9,7 @@ edition = "2018"
 
 [dependencies]
 maplit = "1.0"
-nalgebra = "0.18.1"
+nalgebra = "0.18"
 
 [dependencies.coffee]
 version = "0.4"
